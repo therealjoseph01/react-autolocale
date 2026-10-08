@@ -1,0 +1,10 @@
+import { defineConfig } from "tsdown";
+
+export default defineConfig({
+  entry: { index: "src/runtime/index.ts", vite: "src/vite/index.ts", cli: "src/cli/index.ts" },
+  format: "esm",
+  platform: "neutral",
+  dts: true,
+  clean: true,
+  external: ["virtual:react-autolocale", /^node:/],
+});
