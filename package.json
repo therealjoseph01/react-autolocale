@@ -16,6 +16,9 @@
     "dist",
     "README.md"
   ],
+  "bin": {
+    "react-autolocale": "./dist/cli.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -39,14 +42,19 @@
   },
   "peerDependencies": {
     "react": ">=18",
-    "vite": ">=5"
+    "vite": ">=5",
+    "@huggingface/transformers": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@babel/generator": "^8.0.6",
     "@babel/parser": "^8.0.7",
     "@babel/traverse": "^8.0.7",
     "@babel/types": "^8.0.6",
-    "@huggingface/transformers": "^4.3.1",
     "jsdom": "^30.1.2"
   },
   "devDependencies": {
@@ -59,9 +67,7 @@
     "tsdown": "^0.23.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.3",
-    "vitest": "^5.0.3"
-  },
-  "bin": {
-    "react-autolocale": "./dist/cli.js"
+    "vitest": "^5.0.3",
+    "@huggingface/transformers": "^4.3.1"
   }
 }

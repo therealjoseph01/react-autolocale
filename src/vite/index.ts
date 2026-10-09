@@ -4,6 +4,8 @@ import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 import { cacheFile, ensureTranslations, type Dict } from "../core/cache.js";
 import { getLanguage } from "../core/languages.js";
 import { scanProject, isSourceFile } from "../core/scan.js";
+import { headStrings } from "../core/head.js";
+import { discoverRoutes } from "../core/routes.js";
 import { defaultInclude, findSite, type SiteConfig } from "../core/site.js";
 import { createLocalTranslator, type Translator } from "../core/translate.js";
 import { transformJsx } from "../core/transform.js";
@@ -17,6 +19,11 @@ export interface ReactAutolocaleOptions {
   include?: string[];
   /** Fix individual translations by hand, e.g. { fr: { Contact: "Contact" } }. */
   overrides?: Record<string, Record<string, string>>;
+  /**
+   * Extra pages to build, mainly dynamic ones such as "/users/1" (a function can fetch them). Pages reached
+   * by links and fixed routes written in your router (<Route path="/thank-you">) are found automatically.
+   */
+  routes?: string[] | (() => string[] | Promise<string[]>);
 }
 
 export default function reactAutolocale(options: ReactAutolocaleOptions = {}): Plugin {
@@ -38,6 +45,10 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
     includeDirs = include.map((d) => path.resolve(root, d) + path.sep);
     site = findSite(root, include);
     const strings = scanProject(root, include);
+    if (site.seo) {
+      const html = path.join(root, "index.html");
+      if (fs.existsSync(html)) strings.push(...headStrings(fs.readFileSync(html, "utf8")));
+    }
     dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: options.overrides });
   }
 
@@ -53,6 +64,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
     return [
       `export const original = ${JSON.stringify(site.original)};`,
       `export const originalNative = ${JSON.stringify(getLanguage(site.original)?.native ?? site.original)};`,
+      `export const seo = ${JSON.stringify(site.seo)};`,
       `export const languages = ${JSON.stringify(meta)};`,
       `export const loaders = { ${loaders.join(", ")} };`,
     ].join("\n");
@@ -132,7 +144,10 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
       async handler() {
         if (config.command !== "build" || config.build.ssr || rendered) return;
         rendered = true;
-        await prerender({ root, outDir: path.resolve(root, config.build.outDir), site, dicts, log });
+        const extra = typeof options.routes === "function" ? await options.routes() : (options.routes ?? []);
+        // Routes defined in the code are found automatically; `routes` adds dynamic ones such as "/users/1".
+        const routes = [...new Set([...discoverRoutes(root, include), ...extra])];
+        await prerender({ root, outDir: path.resolve(root, config.build.outDir), site, include, routes, dicts, log });
       },
     },
   };
