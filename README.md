@@ -77,6 +77,36 @@ Machine translation sometimes gets short UI words wrong (a nav link "Home" may c
 reactAutolocale({ overrides: { fr: { Home: "Accueil" }, es: { Home: "Inicio" } } })
 ```
 
+## Different values per language (prices, links, and more)
+
+Some things should differ by language, not just be translated: a price in another currency, a link to a localized page, a phone number. Pick them with `useLanguage()`:
+
+```tsx
+import { useLanguage } from "react-autolocale";
+
+const PRICING = {
+  en: { price: "$19", link: "/pricing" },
+  fr: { price: "17 €", link: "/tarifs" },
+  es: { price: "17 €", link: "/precios" },
+};
+
+function PricingCard() {
+  const { language, basePath } = useLanguage();
+  const p = PRICING[language] ?? PRICING.en;      // fall back to the original language
+  return (
+    <a href={`${basePath}${p.link}`}>
+      <h2>{p.price}</h2>
+      <p>Start your free trial</p>                {/* plain text is still translated automatically */}
+    </a>
+  );
+}
+```
+
+- Plain JSX text is still translated for you. Values you choose in code (the price and link above) are your own data and are never translated.
+- `basePath` is the current language prefix (`/fr`), so internal links stay in the visitor's language. For an external link such as `https://shop.example.fr`, use it as written.
+- These values are part of the prerendered pages, so `/fr/` and `/en/` each ship with their own price and link in the HTML.
+- With React Router, the page you link to must be a route you define (here `/tarifs`). The build does not rename routes by language.
+
 ## Language switcher
 
 Switching is just navigation to `/fr/` (instant, no reload; a page load when `seo` is on). You choose the UI:

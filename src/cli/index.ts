@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { exportTranslations, OVERRIDES_FILE } from "../core/overrides.js";
 import { patchViteConfig } from "./viteConfig.js";
 
 const HELP = `react-autolocale
 
 Usage:
+  react-autolocale export
+      Writes the generated translations to ${OVERRIDES_FILE} so you can edit them.
+      Anything in that file always wins over machine translation. Run a build first.
   react-autolocale init
       Adds the plugin to your vite.config for you.
   react-autolocale add switcher [--dir src/components]
@@ -101,6 +105,11 @@ function addComponent(root: string, args: string[], name: "LanguageSwitcher" | "
 try {
   const [cmd, what, ...rest] = process.argv.slice(2);
   if (cmd === "init") init(process.cwd());
+  else if (cmd === "export") {
+    const { file, languages } = exportTranslations(process.cwd());
+    console.log(`Wrote ${path.relative(process.cwd(), file)}: ${Object.entries(languages).map(([l, n]) => `${l} ${n}`).join(", ")} strings.`);
+    console.log("Edit any value, commit the file, and rebuild. Your edits always win over machine translation.");
+  }
   else if (cmd === "add" && what === "switcher") addComponent(process.cwd(), rest, "LanguageSwitcher");
   else if (cmd === "add" && what === "banner") addComponent(process.cwd(), rest, "LanguageBanner");
   else {

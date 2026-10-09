@@ -6,6 +6,7 @@ import { getLanguage } from "../core/languages.js";
 import { scanProject, isSourceFile } from "../core/scan.js";
 import { headStrings } from "../core/head.js";
 import { ensureBanner } from "../core/banner.js";
+import { mergeOverrides, OVERRIDES_FILE, readOverrides } from "../core/overrides.js";
 import type { BannerText } from "../core/suggestion.js";
 import { discoverRoutes } from "../core/routes.js";
 import { defaultInclude, findSite, type SiteConfig } from "../core/site.js";
@@ -19,7 +20,7 @@ const RESOLVED_ID = "\0" + VIRTUAL_ID;
 export interface ReactAutolocaleOptions {
   /** Folders (relative to the project root) scanned for JSX. Defaults to "src". */
   include?: string[];
-  /** Fix individual translations by hand, e.g. { fr: { Contact: "Contact" } }. */
+  /** Fix individual translations in code, e.g. { fr: { Contact: "Contact" } }. Adds to (and wins over) react-autolocale.overrides.json. */
   overrides?: Record<string, Record<string, string>>;
   /**
    * Extra pages to build, mainly dynamic ones such as "/users/1" (a function can fetch them). Pages reached
@@ -53,7 +54,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
       if (fs.existsSync(html)) strings.push(...headStrings(fs.readFileSync(html, "utf8")));
     }
     banner = await ensureBanner({ root, langs: [site.original, ...site.languages], getTranslator, log });
-    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: options.overrides });
+    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: mergeOverrides(readOverrides(root), options.overrides) });
   }
 
   function virtualModule(): string {
@@ -116,6 +117,10 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
 
     configureServer(s) {
       server = s;
+      // Editing the overrides file in dev re-applies it and reloads the page.
+      const file = path.resolve(root, OVERRIDES_FILE);
+      s.watcher.add(file);
+      s.watcher.on("change", (changed) => changed === file && scheduleRefresh());
     },
 
     async buildStart() {
