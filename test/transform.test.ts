@@ -26,11 +26,12 @@ describe("extractStrings", () => {
     ]);
   });
 
-  it("leaves dynamic content, code blocks and symbol-only text alone", () => {
+  it("leaves bare variables, code blocks and symbol-only text alone", () => {
     const code = `
       const A = () => (
         <div>
-          <p>Hello {name}</p>
+          <p>{name}</p>
+          <p>{a} {b}</p>
           <code>npm install</code>
           <span>—</span>
           <span>42</span>

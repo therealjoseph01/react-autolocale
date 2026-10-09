@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { extractStrings } from "./transform.js";
+import { extractItems } from "./transform.js";
 
 const EXTENSIONS = new Set([".tsx", ".jsx", ".ts", ".js"]);
 const IGNORED_DIRS = new Set(["node_modules", "dist", "build", "coverage"]);
@@ -19,13 +19,22 @@ export function* walk(dir: string): Generator<string> {
   }
 }
 
-/** Every translatable string under the configured folders, in stable file order. */
-export function scanProject(root: string, include: string[]): string[] {
+/** Every translatable string under the configured folders, in stable file order, and where each appears. */
+export function scanProjectDetailed(root: string, include: string[]): { strings: string[]; contexts: Record<string, string> } {
   const found = new Set<string>();
+  const contexts: Record<string, string> = {};
   for (const dir of include) {
     for (const file of walk(path.resolve(root, dir))) {
-      for (const s of extractStrings(fs.readFileSync(file, "utf8"), file)) found.add(s);
+      const items = extractItems(fs.readFileSync(file, "utf8"), file);
+      for (const s of items.strings) {
+        found.add(s);
+        contexts[s] ??= items.contexts[s] ?? "";
+      }
     }
   }
-  return [...found];
+  return { strings: [...found], contexts };
+}
+
+export function scanProject(root: string, include: string[]): string[] {
+  return scanProjectDetailed(root, include).strings;
 }

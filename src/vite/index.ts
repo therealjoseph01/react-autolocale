@@ -3,14 +3,14 @@ import path from "node:path";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 import { cacheFile, ensureTranslations, type Dict } from "../core/cache.js";
 import { getLanguage } from "../core/languages.js";
-import { scanProject, isSourceFile } from "../core/scan.js";
+import { scanProjectDetailed, isSourceFile } from "../core/scan.js";
 import { headStrings } from "../core/head.js";
 import { ensureBanner } from "../core/banner.js";
 import { mergeOverrides, OVERRIDES_FILE, readOverrides } from "../core/overrides.js";
 import type { BannerText } from "../core/suggestion.js";
 import { discoverRoutes } from "../core/routes.js";
 import { defaultInclude, findSite, type SiteConfig } from "../core/site.js";
-import { createLocalTranslator, type Translator } from "../core/translate.js";
+import { createLocalTranslator, ollama, toTranslator, type TranslateFn, type Translator } from "../core/translate.js";
 import { transformJsx } from "../core/transform.js";
 import { prerender } from "./prerender.js";
 
@@ -27,6 +27,13 @@ export interface ReactAutolocaleOptions {
    * by links and fixed routes written in your router (<Route path="/thank-you">) are found automatically.
    */
   routes?: string[] | (() => string[] | Promise<string[]>);
+  /**
+   * Replace the built-in free local model. Pass a function, or a ready-made engine such as `ollama({ model })`.
+   * Engines receive where each string appears (button, h1, ...) so they can translate short labels correctly.
+   */
+  engine?: Translator | TranslateFn;
+  /** Terms that must always translate a given way, e.g. { fr: { Roadmap: "Feuille de route" } }. */
+  glossary?: Record<string, Record<string, string>>;
 }
 
 export default function reactAutolocale(options: ReactAutolocaleOptions = {}): Plugin {
@@ -42,19 +49,19 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
   let rendered = false;
 
   const log = (msg: string) => console.log(msg);
-  const getTranslator = () => (translator ??= createLocalTranslator(log));
+  const getTranslator = () => (translator ??= options.engine ? toTranslator(options.engine) : createLocalTranslator(log));
 
   async function refresh(): Promise<void> {
     include = options.include ?? defaultInclude(root);
     includeDirs = include.map((d) => path.resolve(root, d) + path.sep);
     site = findSite(root, include);
-    const strings = scanProject(root, include);
+    const { strings, contexts } = scanProjectDetailed(root, include);
     if (site.seo) {
       const html = path.join(root, "index.html");
       if (fs.existsSync(html)) strings.push(...headStrings(fs.readFileSync(html, "utf8")));
     }
     banner = await ensureBanner({ root, langs: [site.original, ...site.languages], getTranslator, log });
-    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: mergeOverrides(readOverrides(root), options.overrides) });
+    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, contexts, glossary: options.glossary, overrides: mergeOverrides(readOverrides(root), options.overrides) });
   }
 
   function virtualModule(): string {
@@ -163,4 +170,5 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
   };
 }
 
-export { reactAutolocale };
+export { reactAutolocale, ollama };
+export type { Translator, TranslateFn };

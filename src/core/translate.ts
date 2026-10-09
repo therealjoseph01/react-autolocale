@@ -7,7 +7,54 @@ import { pathToFileURL } from "node:url";
 import { getLanguage } from "./languages.js";
 
 export interface Translator {
-  translate(texts: string[], from: string, to: string): Promise<string[]>;
+  /** `contexts[i]` says where `texts[i]` appears ("button", "h1", "placeholder", ...). Engines may ignore it. */
+  translate(texts: string[], from: string, to: string, contexts?: string[]): Promise<string[]>;
+}
+
+/** The simplest way to plug in your own engine (DeepL, an LLM, ...): one function. */
+export type TranslateFn = (request: { texts: string[]; contexts: string[]; from: string; to: string }) => Promise<string[]>;
+
+export function toTranslator(engine: Translator | TranslateFn): Translator {
+  if (typeof engine !== "function") return engine;
+  return { translate: (texts, from, to, contexts = []) => engine({ texts, contexts: texts.map((_, i) => contexts[i] ?? ""), from, to }) };
+}
+
+/**
+ * Uses a local LLM through Ollama (free, runs on your machine). Unlike the default models it is told
+ * where each string appears, which fixes most one-word mistakes ("Home" in a nav bar is not "Sommaire").
+ */
+export function ollama(options: { model: string; url?: string } = { model: "llama3.1" }): Translator {
+  const url = (options.url ?? "http://localhost:11434").replace(/\/+$/, "");
+  return {
+    async translate(texts, from, to, contexts = []) {
+      const out: string[] = [];
+      for (let i = 0; i < texts.length; i++) {
+        const where = contexts[i] ? ` It appears in a website ${contexts[i]} element.` : "";
+        const res = await fetch(`${url}/api/chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: options.model,
+            stream: false,
+            options: { temperature: 0 },
+            messages: [
+              {
+                role: "system",
+                content:
+                  `You translate website interface text from ${from} to ${to}.${where} ` +
+                  `Keep tokens like X0X, X1X and {name} exactly as written. Reply with only the translation.`,
+              },
+              { role: "user", content: texts[i]! },
+            ],
+          }),
+        });
+        if (!res.ok) throw new Error(`Ollama request failed (${res.status}). Is it running at ${url}?`);
+        const body = (await res.json()) as { message?: { content?: string } };
+        out.push((body.message?.content ?? "").trim());
+      }
+      return out;
+    },
+  };
 }
 
 type Engine = typeof import("@huggingface/transformers");
@@ -122,19 +169,46 @@ export function createLocalTranslator(log: (msg: string) => void = () => {}): Tr
 
 const token = (i: number) => `X${i}X`;
 
-/** Swaps excluded phrases for placeholders so the model leaves them alone. */
-export function mask(text: string, exclude: string[]): { masked: string; phrases: string[] } {
-  const phrases: string[] = [];
-  let masked = text;
-  for (const phrase of [...exclude].sort((a, b) => b.length - a.length)) {
-    if (!phrase || !masked.includes(phrase)) continue;
-    masked = masked.split(phrase).join(token(phrases.length));
-    phrases.push(phrase);
-  }
-  return { masked, phrases };
+/** Prices, phone numbers, versions, hours, percentages: kept exactly as written. */
+const NUMBER = /[$€£¥]?\d+(?:[.,:\-/]\d+)*(?:[a-zA-Z]{1,2}\b)?%?/g;
+/** Runtime values like {name} must survive translation untouched. */
+const PLACEHOLDER = /\{\w+\}/g;
+
+export interface MaskOptions {
+  /** Keep numbers exactly as written (default true). */
+  numbers?: boolean;
+  /** Source term -> required translation. */
+  glossary?: Record<string, string>;
 }
 
-/** Puts excluded phrases back. Returns null if the model dropped or mangled a placeholder. */
+/**
+ * Swaps protected pieces for placeholders so the model leaves them alone: excluded phrases and glossary terms
+ * (restored as given), {placeholders}, and numbers. `phrases[i]` is what `X{i}X` turns back into.
+ */
+export function mask(text: string, exclude: string[], opts: MaskOptions = {}): { masked: string; phrases: string[] } {
+  const phrases: string[] = [];
+  // Private-use characters (no digits or letters) mark spots first, so later patterns can't match inside them.
+  const mark = (restore: string) => {
+    phrases.push(restore);
+    return String.fromCharCode(0xe000) + String.fromCharCode(0xe100 + phrases.length - 1) + String.fromCharCode(0xe001);
+  };
+  let masked = text;
+  const entries: [string, string][] = [
+    ...exclude.map((p): [string, string] => [p, p]),
+    ...Object.entries(opts.glossary ?? {}),
+  ].sort((a, b) => b[0].length - a[0].length);
+  for (const [from, to] of entries) {
+    if (from && masked.includes(from)) masked = masked.split(from).join(mark(to));
+  }
+  masked = masked.replace(PLACEHOLDER, (m) => mark(m));
+  if (opts.numbers !== false) masked = masked.replace(NUMBER, (m) => mark(m));
+  return {
+    masked: masked.replace(/\uE000([\uE100-\uE9FF])\uE001/g, (_, c: string) => token(c.charCodeAt(0) - 0xe100)),
+    phrases,
+  };
+}
+
+/** Puts protected pieces back. Returns null if the model dropped or mangled a placeholder. */
 export function unmask(translated: string, phrases: string[]): string | null {
   let out = translated;
   for (let i = 0; i < phrases.length; i++) {
@@ -142,4 +216,10 @@ export function unmask(translated: string, phrases: string[]): string | null {
     out = out.split(token(i)).join(phrases[i]!);
   }
   return /X\d+X/.test(out) ? null : out;
+}
+
+/** True if every run of digits in the source still appears in the translation. */
+export function digitsPreserved(source: string, translated: string): boolean {
+  const key = (s: string) => (s.match(/\d+/g) ?? []).sort().join(",");
+  return key(source) === key(translated);
 }

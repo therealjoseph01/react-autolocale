@@ -71,6 +71,10 @@ Your host must serve `/fr/about/index.html` for `/fr/about`, which static hosts 
 
 ## Fixing a translation
 
+The quickest way is the overrides file. Run `npx react-autolocale export` after a build: it writes every generated translation into `react-autolocale.overrides.json` in your project root. Edit any value, commit the file and rebuild. Entries in it always win over machine translation and survive rebuilds (edits made inside `dist/` or the cache do not).
+
+You can also fix a few strings in code:
+
 Machine translation sometimes gets short UI words wrong (a nav link "Home" may come back as "Sommaire"). Correct any string in the plugin options; overrides always win:
 
 ```ts
@@ -79,33 +83,52 @@ reactAutolocale({ overrides: { fr: { Home: "Accueil" }, es: { Home: "Inicio" } }
 
 ## Different values per language (prices, links, and more)
 
-Some things should differ by language, not just be translated: a price in another currency, a link to a localized page, a phone number. Pick them with `useLanguage()`:
+Some things should differ by language, not just be translated: a price, a link to a localized page, a phone number.
 
 ```tsx
-import { useLanguage } from "react-autolocale";
+import { useLocalized, Localized, ForLanguages, useFormat } from "react-autolocale";
 
-const PRICING = {
-  en: { price: "$19", link: "/pricing" },
-  fr: { price: "17 €", link: "/tarifs" },
-  es: { price: "17 €", link: "/precios" },
-};
+// A value: falls back to `default`, then to the original language
+const href = useLocalized({ en: "/pricing", fr: "/tarifs", es: "/precios", default: "/pricing" });
+<a href={href}>Pricing</a>                        // "Pricing" itself is still translated for you
 
-function PricingCard() {
-  const { language, basePath } = useLanguage();
-  const p = PRICING[language] ?? PRICING.en;      // fall back to the original language
-  return (
-    <a href={`${basePath}${p.link}`}>
-      <h2>{p.price}</h2>
-      <p>Start your free trial</p>                {/* plain text is still translated automatically */}
-    </a>
-  );
-}
+// A block of UI
+<Localized en={<UsPhone />} fr={<FrPhone />} default={<UsPhone />} />
+
+// Content for some languages only (local offers, legal notices)
+<ForLanguages only={["fr", "es"]}>Free shipping in Europe</ForLanguages>
+<ForLanguages except={["ja"]}><CookieNotice /></ForLanguages>
+
+// Numbers, prices and dates in the visitor's format
+const format = useFormat();
+format.currency(1234.5, "EUR");   // "€1,234.50" in English, "1 234,50 €" in French
+format.number(1250000);           // "1,250,000" / "1 250 000"
+format.percent(0.15);             // "15%" / "15 %"
+format.date(new Date());          // "Oct 9, 2026" / "9 oct. 2026"
 ```
 
-- Plain JSX text is still translated for you. Values you choose in code (the price and link above) are your own data and are never translated.
-- `basePath` is the current language prefix (`/fr`), so internal links stay in the visitor's language. For an external link such as `https://shop.example.fr`, use it as written.
-- These values are part of the prerendered pages, so `/fr/` and `/en/` each ship with their own price and link in the HTML.
-- With React Router, the page you link to must be a route you define (here `/tarifs`). The build does not rename routes by language.
+All of these are part of the prerendered pages, so `/fr/` and `/en/` ship with their own values in the HTML. Values you pick in code are your own data and are never machine-translated. `basePath` from `useLanguage()` is the current prefix (`/fr`) for building internal links. With React Router, the page you link to must be a route you define (here `/tarifs`); the build does not rename routes by language.
+
+## Better translations: glossary and choosing the engine
+
+The built-in model is free and runs on your machine, but it translates each string without knowing where it appears. You can improve it:
+
+```ts
+import reactAutolocale, { ollama } from "react-autolocale/vite";
+
+reactAutolocale({
+  // Terms that must always translate a given way (applied before the model sees the text)
+  glossary: { fr: { Roadmap: "Feuille de route" }, es: { Roadmap: "Hoja de ruta" } },
+
+  // Swap the engine. Free and local, through Ollama (https://ollama.com):
+  engine: ollama({ model: "llama3.1" }),
+
+  // ...or your own function: DeepL, an LLM API, anything. It is told where each string appears.
+  // engine: async ({ texts, contexts, from, to }) => texts.map((t, i) => myTranslate(t, from, to, contexts[i])),
+});
+```
+
+`contexts[i]` is the element or attribute the string sits in (`"button"`, `"a"`, `"h1"`, `"placeholder"`, ...), which is what lets a language model translate a lone "Home" in a nav bar correctly. The built-in model ignores it. Translations are cached, so you only pay for (or wait for) new and changed text.
 
 ## Language switcher
 
@@ -125,7 +148,15 @@ const { language, languages, setLanguage, basePath } = useLanguage();
 
 ## What gets translated
 
-Static JSX text, plus `placeholder`, `title`, `alt`, `aria-label` on HTML elements. `exclude` phrases (brand names) are kept as-is, even inside longer sentences.
+- Static JSX text, plus `placeholder`, `title`, `alt` and `aria-label` on HTML elements.
+- **Text with variables**: `<p>Welcome, {user.name}. You have {count} new messages</p>` is translated as one sentence (`Welcome, {name}. You have {count} new messages`) and your values are filled in at runtime. Variables must be plain names or property paths (`name`, `user.name`, `props.count`). Text mixed with function calls, conditions or nested elements is left as written. There is no plural handling, so write `{count} message(s)` or branch in your code.
+- **Not translated**: anything with `translate="no"` (the standard HTML attribute, inherited by children), `exclude` phrases, `<code>` / `<pre>` / `<script>` / `<style>`, text made only of numbers and symbols, and data that arrives at runtime (API responses, user content).
+- **Numbers** are kept exactly as written. The build checks that every digit (prices, phone numbers, hours, versions) survives translation and re-translates with the number locked if not. If that still fails, the original text is kept instead of shipping a wrong number. Use `useFormat()` (below) for numbers you compute.
+
+```tsx
+<p translate="no">Acme Cloud</p>                       // never translated
+<section translate="no"><Terminal /></section>          // nothing inside is translated
+```
 
 ## Supported languages
 
@@ -236,10 +267,11 @@ With `seo` the build also:
 
 With `seo`, switching language navigates to the real page (so its head tags are correct) instead of swapping in place. Brand names in the title are translated like any text, so add them to `exclude`.
 
-## v1 limits
+## Limits
 
-- Dynamic content (`Hello {name}`, API data) is not translated; planned for v1.5. Text next to `{expressions}` stays in the original language.
+- Data that arrives at runtime (API responses, user-written content) is not translated: it does not exist at build time. Text you write in JSX around those values is.
+- Variables in text must be plain names or property paths; no plural rules.
 - Dynamic routes (`/users/:id`) only get pages you list in `routes`, or that are linked.
 - `<AutoScale>` props must be literals so the plugin can read them at build time.
 - Use Vite's default `base: "/"`.
-- Machine translation is draft quality.
+- Machine translation is draft quality. Short labels, long sentences with variables and less common languages need a human look: use the overrides file.

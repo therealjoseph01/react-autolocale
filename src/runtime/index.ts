@@ -164,6 +164,68 @@ export function __useT(): (s: string) => string {
   return useCallback((s: string) => dict[s] ?? s, [dict]);
 }
 
+/** @internal Inserted by the Vite plugin for text with variables, e.g. `Hello {name}`. */
+export function __TD({ s, v }: { s: string; v: Record<string, unknown> }): ReactElement {
+  const { dict } = useContext(Context);
+  const template = dict[s] ?? s;
+  // Odd entries are variable names; anything React can render (strings, numbers, elements) is allowed.
+  const parts = template.split(/\{(\w+)\}/g).map((part, i) => (i % 2 ? (v[part] as ReactNode) : part));
+  return createElement(Fragment, null, ...parts.map((p, i) => createElement(Fragment, { key: i }, p)));
+}
+
+/**
+ * Pick a value by language: `useLocalized({ en: "/pricing", fr: "/tarifs", default: "/pricing" })`.
+ * Falls back to `default`, then to the original language's value.
+ */
+export function useLocalized<T>(values: Record<string, T | undefined> & { default?: T }): T {
+  const { language } = useContext(Context);
+  return (values[language] ?? values.default ?? values[original]) as T;
+}
+
+/** Component form of `useLocalized`: `<Localized en={<A />} fr={<B />} default={<A />} />`. */
+export function Localized(props: Record<string, ReactNode>): ReactElement {
+  return createElement(Fragment, null, useLocalized<ReactNode>(props));
+}
+
+export interface ForLanguagesProps {
+  /** Show only for these languages. */
+  only?: string[];
+  /** Show for every language except these. */
+  except?: string[];
+  children?: ReactNode;
+}
+
+/** Content that appears for some languages only, such as a local offer or legal notice. */
+export function ForLanguages({ only, except, children }: ForLanguagesProps): ReactElement | null {
+  const { language } = useContext(Context);
+  if (only && !only.includes(language)) return null;
+  if (except?.includes(language)) return null;
+  return createElement(Fragment, null, children);
+}
+
+export interface Format {
+  language: string;
+  number: (value: number, options?: Intl.NumberFormatOptions) => string;
+  currency: (value: number, currency: string, options?: Intl.NumberFormatOptions) => string;
+  percent: (value: number, options?: Intl.NumberFormatOptions) => string;
+  date: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+}
+
+/** Numbers, prices and dates formatted for the current language: `format.currency(19.99, "EUR")`. */
+export function useFormat(): Format {
+  const { language } = useContext(Context);
+  return useMemo(
+    () => ({
+      language,
+      number: (value, options) => new Intl.NumberFormat(language, options).format(value),
+      currency: (value, currency, options) => new Intl.NumberFormat(language, { style: "currency", currency, ...options }).format(value),
+      percent: (value, options) => new Intl.NumberFormat(language, { style: "percent", ...options }).format(value),
+      date: (value, options) => new Intl.DateTimeFormat(language, options ?? { dateStyle: "medium" }).format(new Date(value)),
+    }),
+    [language],
+  );
+}
+
 export interface LanguageSuggestion {
   /** Code of the suggested language, e.g. "fr". */
   language: string;
