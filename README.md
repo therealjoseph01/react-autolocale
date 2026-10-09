@@ -205,6 +205,10 @@ Use these codes in `languages={[...]}`. The source (`original`) language can be 
 
 OPUS-MT models are small (about 75 MB each) and are used when the source language is English. NLLB-200 is one larger download (about 600 MB) shared by all the languages marked NLLB, and is also used for any non-English source. Right-to-left languages automatically get `dir="rtl"` on the page.
 
+### Quality by language
+
+Every supported language was run through the real models on sample UI sentences: all 37 produce output in the right writing system, with no runaway or repeated text. How good that output is varies. French, Spanish, German, Italian, Dutch, Swedish, Danish, Japanese and Korean read naturally on ordinary sentences. Short imperative labels are the weak spot in many languages: "Save 20%" comes back as "save a file" in Russian, Ukrainian, Hungarian, Hindi and Romanian, "Sign in" comes back wrong in Russian, Chinese, Arabic and Vietnamese, and Arabic and Vietnamese could not keep the number in "Save 20% on your first order" (the original English is kept for such strings rather than risking a wrong number). Treat these as drafts: review the languages you ship in `react-autolocale.overrides.json`, add a `glossary` for key terms, or use an `engine` that gets context (see below). You can re-run the check yourself with `RUN_MODELS=1 pnpm exec vitest run test/models.test.ts`.
+
 ## Translations and caching
 
 Translations are generated on first build into `node_modules/.cache/react-autolocale/` and reused; only new or changed strings are translated afterwards. Cache that folder in CI. Models download once into `~/.cache/react-autolocale` (about 75 MB per OPUS-MT language, about 600 MB for NLLB: Japanese, Korean, Portuguese and others). The dev server translates text you add while it runs and reloads.
