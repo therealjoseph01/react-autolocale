@@ -1,9 +1,56 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { getLanguage } from "./languages.js";
 
 export interface Translator {
   translate(texts: string[], from: string, to: string): Promise<string[]>;
+}
+
+type Engine = typeof import("@huggingface/transformers");
+
+const ENGINE_PACKAGE = "@huggingface/transformers@^4.3.1";
+const ENGINE_DIR = path.join(os.homedir(), ".cache", "react-autolocale", "engine");
+
+/**
+ * Finds the translation engine. Uses the project's own copy if it has one; otherwise installs it once
+ * into ~/.cache/react-autolocale/engine (shared by all projects, never touches the project's node_modules).
+ */
+async function loadEngine(log: (msg: string) => void): Promise<Engine> {
+  try {
+    return await import("@huggingface/transformers");
+  } catch {
+    /* not installed in the project, use the private copy */
+  }
+  const require = createRequire(path.join(ENGINE_DIR, "package.json"));
+  const find = () => require.resolve("@huggingface/transformers");
+  let entry: string;
+  try {
+    entry = find();
+  } catch {
+    log("[react-autolocale] Installing the translation engine (one time, about 440 MB)...");
+    fs.mkdirSync(ENGINE_DIR, { recursive: true });
+    const pkg = path.join(ENGINE_DIR, "package.json");
+    if (!fs.existsSync(pkg)) fs.writeFileSync(pkg, JSON.stringify({ name: "react-autolocale-engine", private: true }));
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const res = spawnSync(npm, ["install", "--prefix", ENGINE_DIR, "--no-audit", "--no-fund", "--loglevel=error", ENGINE_PACKAGE], {
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
+    try {
+      if (res.status !== 0) throw new Error("npm failed");
+      entry = find();
+    } catch {
+      throw new Error(
+        `Could not install the translation engine automatically. Install it yourself: npm install -D @huggingface/transformers`,
+      );
+    }
+  }
+  const mod = await import(pathToFileURL(entry).href);
+  return (mod.pipeline ? mod : mod.default) as Engine;
 }
 
 type Pipe = (input: string[], options?: Record<string, unknown>) => Promise<{ translation_text: string }[]>;
@@ -19,12 +66,12 @@ const BATCH = 1;
  */
 export function createLocalTranslator(log: (msg: string) => void = () => {}): Translator {
   const pipes = new Map<string, Promise<Pipe>>();
-  let hf: Promise<typeof import("@huggingface/transformers")> | null = null;
+  let hf: Promise<Engine> | null = null;
 
   const getPipe = (model: string): Promise<Pipe> => {
     let p = pipes.get(model);
     if (!p) {
-      hf ??= import("@huggingface/transformers").then((m) => {
+      hf ??= loadEngine(log).then((m) => {
         m.env.cacheDir = path.join(os.homedir(), ".cache", "react-autolocale", "models");
         return m;
       });

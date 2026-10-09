@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractStrings, transformJsx } from "../src/core/transform.js";
+import { patchViteConfig } from "../src/cli/viteConfig.js";
 
 describe("extractStrings", () => {
   it("finds static text and translatable attributes", () => {
@@ -85,3 +86,17 @@ describe("transformJsx", () => {
   });
 });
 
+
+describe("patchViteConfig", () => {
+  it("adds import and plugin to a standard config", () => {
+    const src = `import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n});\n`;
+    const { code } = patchViteConfig(src)!;
+    expect(code).toContain(`import reactAutolocale from "react-autolocale/vite";`);
+    expect(code).toContain("plugins: [reactAutolocale(), react()]");
+  });
+
+  it("is idempotent", () => {
+    const once = patchViteConfig(`import { defineConfig } from "vite";\nexport default defineConfig({ plugins: [] });`)!.code;
+    expect(patchViteConfig(once)).toEqual({ code: once, changed: false });
+  });
+});

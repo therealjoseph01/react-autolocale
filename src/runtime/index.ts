@@ -11,7 +11,8 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { original, originalNative, languages, loaders } from "virtual:react-autolocale";
+import { redirectTarget, STORAGE_KEY } from "../core/redirect.js";
+import { original, originalNative, seo, languages, loaders } from "virtual:react-autolocale";
 
 type Dict = Record<string, string>;
 
@@ -75,6 +76,13 @@ export interface AutoScaleProps {
   languages: string[];
   /** Phrases that must never be translated, such as brand names. Must be a literal. */
   exclude?: string[];
+  /**
+   * Opt in to SEO changes at build time: translated title/meta tags, canonical and hreflang links,
+   * and a sitemap. Off by default: nothing in <head> is touched. Must be a literal.
+   */
+  seo?: boolean | "true";
+  /** Public site URL (e.g. "https://example.com"); used by `seo` for absolute links and the sitemap. */
+  siteUrl?: string;
   children?: ReactNode;
 }
 
@@ -87,6 +95,18 @@ export function AutoScale({ children }: AutoScaleProps): ReactElement {
 
   const apply = useCallback(async (code: string, push: boolean) => {
     if (!codes.has(code)) return;
+    if (push && hasDom) {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, code);
+      } catch {
+        /* storage unavailable */
+      }
+      // With seo on, every language is a real page with its own head tags, so navigate to it.
+      if (seo) {
+        window.location.assign(pathFor(code));
+        return;
+      }
+    }
     const dict = code === original ? {} : await load(code);
     setState({ language: code, dict });
     if (push && hasDom) window.history.pushState(null, "", pathFor(code));
@@ -98,6 +118,26 @@ export function AutoScale({ children }: AutoScaleProps): ReactElement {
     document.documentElement.lang = state.language;
     document.documentElement.dir = languages.find((l) => l.code === state.language)?.rtl ? "rtl" : "ltr";
   }, [state.language]);
+
+  // First visit on an un-prefixed URL: move the visitor to their saved or browser language.
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+    const to = redirectTarget({
+      pathname: window.location.pathname,
+      search: window.location.search,
+      hash: window.location.hash,
+      saved,
+      browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
+      codes: [...codes],
+      original,
+    });
+    if (to) window.location.replace(to);
+  }, []);
 
   // Dev server has no pre-rendered dictionary: fetch it on first load.
   useEffect(() => {

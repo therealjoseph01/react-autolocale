@@ -11,6 +11,8 @@ describe("parseAutoScale", () => {
       original: "en",
       languages: ["fr", "es"],
       exclude: ["Acme", "Acme Pro"],
+      seo: false,
+      siteUrl: undefined,
     });
   });
 
@@ -46,5 +48,44 @@ describe("pageLink", () => {
     expect(pageLink("https://example.com/fr/a", "fr")).toEqual([]);
     expect(pageLink("/fr/menu.pdf", "fr")).toEqual([]);
     expect(pageLink("mailto:a@b.co", "fr")).toEqual([]);
+  });
+});
+
+import { routesInCode } from "../src/core/routes.js";
+import { routePath } from "../src/vite/prerender.js";
+
+describe("routesInCode", () => {
+  it("reads fixed JSX routes, joins nested ones, skips params and wildcards", () => {
+    const code = `const R = () => (
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/thank-you" element={<T />} />
+        <Route path="/account" element={<Layout />}>
+          <Route path="billing" element={<B />} />
+          <Route path="/abs" element={<A />} />
+          <Route index element={<I />} />
+        </Route>
+        <Route path="/users/:id" element={<U />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    );`;
+    expect(routesInCode(code, "R.tsx").sort()).toEqual(["/", "/abs", "/account", "/account/billing", "/thank-you"]);
+  });
+
+  it("reads route objects with children", () => {
+    const code = `const router = createBrowserRouter([
+      { path: "/", element: <Home /> },
+      { path: "/shop", children: [{ path: "cart" }, { path: ":id" }] },
+    ]);`;
+    expect(routesInCode(code, "r.tsx").sort()).toEqual(["/", "/shop/cart"]);
+  });
+});
+
+describe("routePath", () => {
+  it("normalizes user-supplied routes", () => {
+    expect(routePath("thank-you")).toBe("/thank-you/");
+    expect(routePath("/users/1/")).toBe("/users/1/");
+    expect(routePath("/")).toBe("/");
+    expect(routePath("/files/a.pdf")).toBeNull();
   });
 });
