@@ -8,6 +8,8 @@ declare module "virtual:react-autolocale" {
   export const originalNative: string;
   /** <AutoScale seo> was set: switching language navigates to the real page. */
   export const seo: boolean;
+  /** The language-suggestion banner's phrases in every language. */
+  export const banner: Record<string, { prompt: string; switch: string; dismiss: string }>;
   /** Target languages (not including the original). */
   export const languages: LanguageMeta[];
   export const loaders: Record<string, () => Promise<{ default: Record<string, string> }>>;

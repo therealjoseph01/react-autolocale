@@ -17,7 +17,7 @@
     "README.md"
   ],
   "bin": {
-    "react-autolocale": "./dist/cli.js"
+    "react-autolocale": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -35,7 +35,8 @@
     "build": "tsdown",
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "prepublishOnly": "pnpm build && pnpm test"
+    "prepublishOnly": "pnpm build && pnpm test",
+    "e2e": "node e2e/run.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -68,6 +69,7 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.3",
     "vitest": "^5.0.3",
-    "@huggingface/transformers": "^4.3.1"
+    "@huggingface/transformers": "^4.3.1",
+    "playwright-core": "^1.50.0"
   }
 }

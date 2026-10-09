@@ -3,11 +3,14 @@ import path from "node:path";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 import { cacheFile, ensureTranslations, type Dict } from "../core/cache.js";
 import { getLanguage } from "../core/languages.js";
-import { scanProject, isSourceFile } from "../core/scan.js";
+import { scanProjectDetailed, isSourceFile } from "../core/scan.js";
 import { headStrings } from "../core/head.js";
+import { ensureBanner } from "../core/banner.js";
+import { mergeOverrides, OVERRIDES_FILE, readOverrides } from "../core/overrides.js";
+import type { BannerText } from "../core/suggestion.js";
 import { discoverRoutes } from "../core/routes.js";
 import { defaultInclude, findSite, type SiteConfig } from "../core/site.js";
-import { createLocalTranslator, type Translator } from "../core/translate.js";
+import { createLocalTranslator, ollama, toTranslator, type TranslateFn, type Translator } from "../core/translate.js";
 import { transformJsx } from "../core/transform.js";
 import { prerender } from "./prerender.js";
 
@@ -17,13 +20,20 @@ const RESOLVED_ID = "\0" + VIRTUAL_ID;
 export interface ReactAutolocaleOptions {
   /** Folders (relative to the project root) scanned for JSX. Defaults to "src". */
   include?: string[];
-  /** Fix individual translations by hand, e.g. { fr: { Contact: "Contact" } }. */
+  /** Fix individual translations in code, e.g. { fr: { Contact: "Contact" } }. Adds to (and wins over) react-autolocale.overrides.json. */
   overrides?: Record<string, Record<string, string>>;
   /**
    * Extra pages to build, mainly dynamic ones such as "/users/1" (a function can fetch them). Pages reached
    * by links and fixed routes written in your router (<Route path="/thank-you">) are found automatically.
    */
   routes?: string[] | (() => string[] | Promise<string[]>);
+  /**
+   * Replace the built-in free local model. Pass a function, or a ready-made engine such as `ollama({ model })`.
+   * Engines receive where each string appears (button, h1, ...) so they can translate short labels correctly.
+   */
+  engine?: Translator | TranslateFn;
+  /** Terms that must always translate a given way, e.g. { fr: { Roadmap: "Feuille de route" } }. */
+  glossary?: Record<string, Record<string, string>>;
 }
 
 export default function reactAutolocale(options: ReactAutolocaleOptions = {}): Plugin {
@@ -33,23 +43,25 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
   let includeDirs: string[] = [];
   let site: SiteConfig;
   let dicts: Record<string, Dict> = {};
+  let banner: Record<string, BannerText> = {};
   let translator: Translator | undefined;
   let server: ViteDevServer | undefined;
   let rendered = false;
 
   const log = (msg: string) => console.log(msg);
-  const getTranslator = () => (translator ??= createLocalTranslator(log));
+  const getTranslator = () => (translator ??= options.engine ? toTranslator(options.engine) : createLocalTranslator(log));
 
   async function refresh(): Promise<void> {
     include = options.include ?? defaultInclude(root);
     includeDirs = include.map((d) => path.resolve(root, d) + path.sep);
     site = findSite(root, include);
-    const strings = scanProject(root, include);
+    const { strings, contexts } = scanProjectDetailed(root, include);
     if (site.seo) {
       const html = path.join(root, "index.html");
       if (fs.existsSync(html)) strings.push(...headStrings(fs.readFileSync(html, "utf8")));
     }
-    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: options.overrides });
+    banner = await ensureBanner({ root, langs: [site.original, ...site.languages], getTranslator, log });
+    dicts = await ensureTranslations({ root, site, strings, getTranslator, log, contexts, glossary: options.glossary, overrides: mergeOverrides(readOverrides(root), options.overrides) });
   }
 
   function virtualModule(): string {
@@ -65,6 +77,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
       `export const original = ${JSON.stringify(site.original)};`,
       `export const originalNative = ${JSON.stringify(getLanguage(site.original)?.native ?? site.original)};`,
       `export const seo = ${JSON.stringify(site.seo)};`,
+      `export const banner = ${JSON.stringify(banner)};`,
       `export const languages = ${JSON.stringify(meta)};`,
       `export const loaders = { ${loaders.join(", ")} };`,
     ].join("\n");
@@ -111,6 +124,10 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
 
     configureServer(s) {
       server = s;
+      // Editing the overrides file in dev re-applies it and reloads the page.
+      const file = path.resolve(root, OVERRIDES_FILE);
+      s.watcher.add(file);
+      s.watcher.on("change", (changed) => changed === file && scheduleRefresh());
     },
 
     async buildStart() {
@@ -153,4 +170,5 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
   };
 }
 
-export { reactAutolocale };
+export { reactAutolocale, ollama };
+export type { Translator, TranslateFn };

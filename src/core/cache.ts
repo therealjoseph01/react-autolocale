@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { SiteConfig } from "./site.js";
-import { mask, unmask, type Translator } from "./translate.js";
+import { digitsPreserved, mask, unmask, type Translator } from "./translate.js";
 
 export type Dict = Record<string, string>;
 
@@ -31,6 +31,10 @@ export interface EnsureOptions {
   root: string;
   site: SiteConfig;
   strings: string[];
+  /** Where each string appears ("button", "h1", ...), passed to engines that can use it. */
+  contexts?: Record<string, string>;
+  /** Terms that must always translate a given way: { fr: { Roadmap: "Feuille de route" } }. */
+  glossary?: Record<string, Record<string, string>>;
   /** Hand-written fixes: { fr: { "Contact": "Contact" } }. They always win over machine translation. */
   overrides?: Record<string, Record<string, string>>;
   /** Created lazily, only if something needs translating. */
@@ -55,14 +59,28 @@ export async function ensureTranslations(opts: EnsureOptions): Promise<Record<st
     for (const s of wanted) if (existing[s]) next[s] = existing[s]!;
     for (const s of wanted) if (fixed[s]) next[s] = fixed[s]!;
 
-    if (missing.length) {
-      log(`[react-autolocale] ${lang}: translating ${missing.length} new string${missing.length === 1 ? "" : "s"}...`);
-      const jobs = missing.map((s) => ({ source: s, ...mask(s, site.exclude) }));
-      const out = await opts.getTranslator().translate(jobs.map((j) => j.masked), site.original, lang);
-      jobs.forEach((job, i) => {
-        const restored = unmask(out[i] ?? "", job.phrases);
-        if (restored) next[job.source] = restored;
-        else log(`[react-autolocale] ${lang}: kept "${job.source}" untranslated (could not preserve excluded text)`);
+    const terms = opts.glossary?.[lang] ?? {};
+    for (const s2 of missing) if (terms[s2]) next[s2] = terms[s2]!; // a whole string that is a glossary term
+    const toTranslate = missing.filter((s2) => !terms[s2]);
+
+    if (toTranslate.length) {
+      log(`[react-autolocale] ${lang}: translating ${toTranslate.length} new string${toTranslate.length === 1 ? "" : "s"}...`);
+      const ctx = toTranslate.map((s2) => opts.contexts?.[s2] ?? "");
+      const run = async (items: string[], contextList: string[], numbers: boolean) => {
+        const jobs = items.map((s2) => ({ source: s2, ...mask(s2, site.exclude, { glossary: terms, numbers }) }));
+        const out = await opts.getTranslator().translate(jobs.map((j) => j.masked), site.original, lang, contextList);
+        return jobs.map((job, i) => unmask(out[i] ?? "", job.phrases));
+      };
+      // Translate naturally first and check that every digit survived. Only strings where a number was changed
+      // or dropped are translated again with their numbers locked; if that fails too, the original text is kept
+      // rather than shipping a wrong price or phone number.
+      const first = await run(toTranslate, ctx, false);
+      const redo = toTranslate.map((source, i) => i).filter((i) => !first[i] || !digitsPreserved(toTranslate[i]!, first[i]!));
+      const second = redo.length ? await run(redo.map((i) => toTranslate[i]!), redo.map((i) => ctx[i]!), true) : [];
+      toTranslate.forEach((source, i) => {
+        const result = redo.includes(i) ? second[redo.indexOf(i)] : first[i];
+        if (result) next[source] = result;
+        else log(`[react-autolocale] ${lang}: kept "${source}" untranslated (could not preserve its numbers or excluded text)`);
       });
     }
     const same = JSON.stringify(existing) === JSON.stringify(next);

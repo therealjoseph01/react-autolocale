@@ -12,7 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import { redirectTarget, STORAGE_KEY } from "../core/redirect.js";
-import { original, originalNative, seo, languages, loaders } from "virtual:react-autolocale";
+import { BANNER_EN, DISMISSED_KEY, suggestLanguage } from "../core/suggestion.js";
+import { original, originalNative, seo, banner, languages, loaders } from "virtual:react-autolocale";
 
 type Dict = Record<string, string>;
 
@@ -64,8 +65,31 @@ const Context = createContext<Ctx>({ language: original, dict: {}, setLanguage: 
 function initialState(): State {
   if (!hasDom) return { language: original, dict: {} };
   const boot = window.__AUTOSCALE__;
-  const language = boot?.lang ?? prefixOf(window.location.pathname) ?? original;
   if (boot) cache.set(boot.lang, boot.dict);
+  const { pathname, search, hash } = window.location;
+  const fromUrl = prefixOf(pathname);
+  if (fromUrl === null) {
+    // An un-prefixed URL such as "/": send the visitor to their language, or settle on the original language's
+    // prefixed URL so a router with basename "/en" can match. The URL is the source of truth for the language.
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+    const to = redirectTarget({
+      pathname,
+      search,
+      hash,
+      saved,
+      browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
+      codes: [...codes],
+      original,
+    });
+    if (to) window.location.replace(to);
+    else window.history.replaceState(window.history.state, "", `/${original}${pathname}${search}${hash}`);
+  }
+  const language = fromUrl ?? original;
   return { language, dict: language === original ? {} : (cache.get(language) ?? {}) };
 }
 
@@ -119,26 +143,6 @@ export function AutoScale({ children }: AutoScaleProps): ReactElement {
     document.documentElement.dir = languages.find((l) => l.code === state.language)?.rtl ? "rtl" : "ltr";
   }, [state.language]);
 
-  // First visit on an un-prefixed URL: move the visitor to their saved or browser language.
-  useEffect(() => {
-    let saved: string | null = null;
-    try {
-      saved = window.localStorage.getItem(STORAGE_KEY);
-    } catch {
-      /* storage unavailable */
-    }
-    const to = redirectTarget({
-      pathname: window.location.pathname,
-      search: window.location.search,
-      hash: window.location.hash,
-      saved,
-      browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
-      codes: [...codes],
-      original,
-    });
-    if (to) window.location.replace(to);
-  }, []);
-
   // Dev server has no pre-rendered dictionary: fetch it on first load.
   useEffect(() => {
     if (state.language !== original && !cache.has(state.language)) void apply(state.language, false);
@@ -161,6 +165,176 @@ export function __T({ s }: { s: string }): ReactElement {
 export function __useT(): (s: string) => string {
   const { dict } = useContext(Context);
   return useCallback((s: string) => dict[s] ?? s, [dict]);
+}
+
+/** @internal Inserted by the Vite plugin for text with variables, e.g. `Hello {name}`. */
+export function __TD({ s, v }: { s: string; v: Record<string, unknown> }): ReactElement {
+  const { dict } = useContext(Context);
+  const template = dict[s] ?? s;
+  // Odd entries are variable names; anything React can render (strings, numbers, elements) is allowed.
+  const parts = template.split(/\{(\w+)\}/g).map((part, i) => (i % 2 ? (v[part] as ReactNode) : part));
+  return createElement(Fragment, null, ...parts.map((p, i) => createElement(Fragment, { key: i }, p)));
+}
+
+/**
+ * Pick a value by language: `useLocalized({ en: "/pricing", fr: "/tarifs", default: "/pricing" })`.
+ * Falls back to `default`, then to the original language's value.
+ */
+export function useLocalized<T>(values: Record<string, T | undefined> & { default?: T }): T {
+  const { language } = useContext(Context);
+  return (values[language] ?? values.default ?? values[original]) as T;
+}
+
+/** Component form of `useLocalized`: `<Localized en={<A />} fr={<B />} default={<A />} />`. */
+export function Localized(props: Record<string, ReactNode>): ReactElement {
+  return createElement(Fragment, null, useLocalized<ReactNode>(props));
+}
+
+export interface ForLanguagesProps {
+  /** Show only for these languages. */
+  only?: string[];
+  /** Show for every language except these. */
+  except?: string[];
+  children?: ReactNode;
+}
+
+/** Content that appears for some languages only, such as a local offer or legal notice. */
+export function ForLanguages({ only, except, children }: ForLanguagesProps): ReactElement | null {
+  const { language } = useContext(Context);
+  if (only && !only.includes(language)) return null;
+  if (except?.includes(language)) return null;
+  return createElement(Fragment, null, children);
+}
+
+export interface Format {
+  language: string;
+  number: (value: number, options?: Intl.NumberFormatOptions) => string;
+  currency: (value: number, currency: string, options?: Intl.NumberFormatOptions) => string;
+  percent: (value: number, options?: Intl.NumberFormatOptions) => string;
+  date: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+}
+
+/** Numbers, prices and dates formatted for the current language: `format.currency(19.99, "EUR")`. */
+export function useFormat(): Format {
+  const { language } = useContext(Context);
+  return useMemo(
+    () => ({
+      language,
+      number: (value, options) => new Intl.NumberFormat(language, options).format(value),
+      currency: (value, currency, options) => new Intl.NumberFormat(language, { style: "currency", currency, ...options }).format(value),
+      percent: (value, options) => new Intl.NumberFormat(language, { style: "percent", ...options }).format(value),
+      date: (value, options) => new Intl.DateTimeFormat(language, options ?? { dateStyle: "medium" }).format(new Date(value)),
+    }),
+    [language],
+  );
+}
+
+export interface LanguageSuggestion {
+  /** Code of the suggested language, e.g. "fr". */
+  language: string;
+  /** The suggested language's own name, e.g. "Français". */
+  native: string;
+  /** Full sentence in the visitor's language, e.g. "This page is also available in Français. Switch?" */
+  text: string;
+  switchLabel: string;
+  dismissLabel: string;
+  /** Go to this page in the suggested language. */
+  accept: () => void;
+  /** Hide the suggestion and don't offer this language again. */
+  dismiss: () => void;
+}
+
+function readDismissed(): string[] {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * For building your own banner. Returns null when there is nothing to suggest: the visitor's browser language
+ * is the page's language, is not supported, was dismissed, or they already picked a language.
+ */
+export function useLanguageSuggestion(): LanguageSuggestion | null {
+  const { language, setLanguage } = useContext(Context);
+  const [code, setCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    let chosen = false;
+    try {
+      chosen = window.localStorage.getItem(STORAGE_KEY) !== null;
+    } catch {
+      /* storage unavailable */
+    }
+    setCode(
+      suggestLanguage({
+        browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
+        codes: [...codes],
+        current: language,
+        dismissed: readDismissed(),
+        chosen,
+      }),
+    );
+  }, [language]);
+
+  if (!code) return null;
+  const text = banner[code] ?? BANNER_EN;
+  const native = code === original ? originalNative : (languages.find((l) => l.code === code)?.native ?? code);
+  return {
+    language: code,
+    native,
+    text: text.prompt.split("{language}").join(native),
+    switchLabel: text.switch.split("{language}").join(native),
+    dismissLabel: text.dismiss.split("{language}").join(native),
+    accept: () => void setLanguage(code),
+    dismiss: () => {
+      try {
+        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...readDismissed(), code]));
+      } catch {
+        /* storage unavailable */
+      }
+      setCode(null);
+    },
+  };
+}
+
+export interface LanguageBannerProps {
+  className?: string;
+  style?: CSSProperties;
+  /** Replace the markup entirely: `{(s) => <MyBar>{s.text}</MyBar>}`. */
+  children?: (suggestion: LanguageSuggestion) => ReactNode;
+}
+
+const BAR: CSSProperties = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  display: "flex",
+  gap: 12,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "10px 16px",
+  background: "#111",
+  color: "#fff",
+  font: "14px system-ui, sans-serif",
+  zIndex: 2147483000,
+};
+
+/** A ready-made suggestion bar. Style it with `className`/`style`, or pass a render function to build your own. */
+export function LanguageBanner({ className, style, children }: LanguageBannerProps): ReactElement | null {
+  const s = useLanguageSuggestion();
+  if (!s) return null;
+  if (children) return createElement(Fragment, null, children(s));
+  return createElement(
+    "div",
+    { role: "region", "aria-label": s.native, className, style: className ? style : { ...BAR, ...style } },
+    createElement("span", null, s.text),
+    createElement("button", { type: "button", onClick: s.accept, lang: s.language }, s.switchLabel),
+    createElement("button", { type: "button", onClick: s.dismiss }, s.dismissLabel),
+  );
 }
 
 export interface LanguageApi {
