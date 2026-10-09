@@ -12,7 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import { redirectTarget, STORAGE_KEY } from "../core/redirect.js";
-import { original, originalNative, seo, languages, loaders } from "virtual:react-autolocale";
+import { BANNER_EN, DISMISSED_KEY, suggestLanguage } from "../core/suggestion.js";
+import { original, originalNative, seo, banner, languages, loaders } from "virtual:react-autolocale";
 
 type Dict = Record<string, string>;
 
@@ -161,6 +162,114 @@ export function __T({ s }: { s: string }): ReactElement {
 export function __useT(): (s: string) => string {
   const { dict } = useContext(Context);
   return useCallback((s: string) => dict[s] ?? s, [dict]);
+}
+
+export interface LanguageSuggestion {
+  /** Code of the suggested language, e.g. "fr". */
+  language: string;
+  /** The suggested language's own name, e.g. "Français". */
+  native: string;
+  /** Full sentence in the visitor's language, e.g. "This page is also available in Français. Switch?" */
+  text: string;
+  switchLabel: string;
+  dismissLabel: string;
+  /** Go to this page in the suggested language. */
+  accept: () => void;
+  /** Hide the suggestion and don't offer this language again. */
+  dismiss: () => void;
+}
+
+function readDismissed(): string[] {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * For building your own banner. Returns null when there is nothing to suggest: the visitor's browser language
+ * is the page's language, is not supported, was dismissed, or they already picked a language.
+ */
+export function useLanguageSuggestion(): LanguageSuggestion | null {
+  const { language, setLanguage } = useContext(Context);
+  const [code, setCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    let chosen = false;
+    try {
+      chosen = window.localStorage.getItem(STORAGE_KEY) !== null;
+    } catch {
+      /* storage unavailable */
+    }
+    setCode(
+      suggestLanguage({
+        browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
+        codes: [...codes],
+        current: language,
+        dismissed: readDismissed(),
+        chosen,
+      }),
+    );
+  }, [language]);
+
+  if (!code) return null;
+  const text = banner[code] ?? BANNER_EN;
+  const native = code === original ? originalNative : (languages.find((l) => l.code === code)?.native ?? code);
+  return {
+    language: code,
+    native,
+    text: text.prompt.split("{language}").join(native),
+    switchLabel: text.switch.split("{language}").join(native),
+    dismissLabel: text.dismiss.split("{language}").join(native),
+    accept: () => void setLanguage(code),
+    dismiss: () => {
+      try {
+        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...readDismissed(), code]));
+      } catch {
+        /* storage unavailable */
+      }
+      setCode(null);
+    },
+  };
+}
+
+export interface LanguageBannerProps {
+  className?: string;
+  style?: CSSProperties;
+  /** Replace the markup entirely: `{(s) => <MyBar>{s.text}</MyBar>}`. */
+  children?: (suggestion: LanguageSuggestion) => ReactNode;
+}
+
+const BAR: CSSProperties = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  display: "flex",
+  gap: 12,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "10px 16px",
+  background: "#111",
+  color: "#fff",
+  font: "14px system-ui, sans-serif",
+  zIndex: 2147483000,
+};
+
+/** A ready-made suggestion bar. Style it with `className`/`style`, or pass a render function to build your own. */
+export function LanguageBanner({ className, style, children }: LanguageBannerProps): ReactElement | null {
+  const s = useLanguageSuggestion();
+  if (!s) return null;
+  if (children) return createElement(Fragment, null, children(s));
+  return createElement(
+    "div",
+    { role: "region", "aria-label": s.native, className, style: className ? style : { ...BAR, ...style } },
+    createElement("span", null, s.text),
+    createElement("button", { type: "button", onClick: s.accept, lang: s.language }, s.switchLabel),
+    createElement("button", { type: "button", onClick: s.dismiss }, s.dismissLabel),
+  );
 }
 
 export interface LanguageApi {

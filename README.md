@@ -150,7 +150,42 @@ Translations are generated on first build into `node_modules/.cache/react-autolo
 
 ## Automatic language navigation
 
-Whenever a visitor lands on a URL without a language prefix (like `/` or `/about`), they are sent to the page for their saved language, or otherwise their browser language, if you support it: a French browser lands on `/fr/`. A language chosen in the switcher is remembered and wins on later visits; the browser language itself is not saved, it is simply checked each time. Explicit URLs such as `/fr/about/` or `/en/` are never redirected, and unsupported browser languages stay on the original.
+Whether a visitor is moved depends on the URL they land on:
+
+| Where they land | What happens |
+| --- | --- |
+| `/` or `/about` (no language in the URL) | Sent to their saved language, otherwise their browser language, if you support it (a French browser lands on `/fr/about`). |
+| `/en/about` or `/fr/about` (explicit language URL) | Never redirected. The page they asked for is the page they get. |
+
+- A language chosen in the switcher is remembered and wins on later visits. The browser language itself is not saved; it is checked each time.
+- The browser's language setting is used, not the visitor's physical location. Unsupported browser languages stay on the original.
+- The root page redirects before it paints, so visitors don't see a flash of the wrong language.
+
+This follows common practice. Redirecting the bare root by browser language is widespread, while forcing visitors off an explicit language URL is avoided: shared links and search results should open the page they point to, redirect loops are avoided, and it respects someone who chose a language on purpose. Search engines are told which URL belongs to which language through `hreflang` tags (see SEO below), so a French searcher is normally shown the `/fr/` URL in the first place. Visitors who land on another language's URL can use the language switcher.
+
+## Suggesting the visitor's language (optional banner)
+
+Instead of forcing a redirect on an explicit URL, you can offer the visitor their browser language: a French visitor on `/en/about` sees "Cette page est également disponible en Français." with a button to switch and one to dismiss. It appears only when the browser language is supported and differs from the page, is shown after the page loads (so it never changes the HTML search engines see), remembers a dismissal, and stays hidden once the visitor has picked a language. The text is shown in the visitor's own language.
+
+It is off unless you add it, and you decide how it looks:
+
+```tsx
+import { LanguageBanner } from "react-autolocale";
+
+<LanguageBanner />                                   // ready-made bar, style it with className / style
+<LanguageBanner className="my-bar" />                // your own CSS replaces the default look
+
+<LanguageBanner>                                     // or build the markup yourself
+  {(s) => (
+    <aside>
+      {s.text} <button onClick={s.accept}>{s.switchLabel}</button>
+      <button onClick={s.dismiss}>{s.dismissLabel}</button>
+    </aside>
+  )}
+</LanguageBanner>
+```
+
+Prefer to own the component? `npx react-autolocale add banner` copies an editable `LanguageBanner` into your project. For full control use the hook, `useLanguageSuggestion()`, which returns `null` or `{ language, native, text, switchLabel, dismissLabel, accept, dismiss }`.
 
 ## SEO (opt-in)
 

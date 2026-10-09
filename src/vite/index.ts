@@ -5,6 +5,8 @@ import { cacheFile, ensureTranslations, type Dict } from "../core/cache.js";
 import { getLanguage } from "../core/languages.js";
 import { scanProject, isSourceFile } from "../core/scan.js";
 import { headStrings } from "../core/head.js";
+import { ensureBanner } from "../core/banner.js";
+import type { BannerText } from "../core/suggestion.js";
 import { discoverRoutes } from "../core/routes.js";
 import { defaultInclude, findSite, type SiteConfig } from "../core/site.js";
 import { createLocalTranslator, type Translator } from "../core/translate.js";
@@ -33,6 +35,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
   let includeDirs: string[] = [];
   let site: SiteConfig;
   let dicts: Record<string, Dict> = {};
+  let banner: Record<string, BannerText> = {};
   let translator: Translator | undefined;
   let server: ViteDevServer | undefined;
   let rendered = false;
@@ -49,6 +52,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
       const html = path.join(root, "index.html");
       if (fs.existsSync(html)) strings.push(...headStrings(fs.readFileSync(html, "utf8")));
     }
+    banner = await ensureBanner({ root, langs: [site.original, ...site.languages], getTranslator, log });
     dicts = await ensureTranslations({ root, site, strings, getTranslator, log, overrides: options.overrides });
   }
 
@@ -65,6 +69,7 @@ export default function reactAutolocale(options: ReactAutolocaleOptions = {}): P
       `export const original = ${JSON.stringify(site.original)};`,
       `export const originalNative = ${JSON.stringify(getLanguage(site.original)?.native ?? site.original)};`,
       `export const seo = ${JSON.stringify(site.seo)};`,
+      `export const banner = ${JSON.stringify(banner)};`,
       `export const languages = ${JSON.stringify(meta)};`,
       `export const loaders = { ${loaders.join(", ")} };`,
     ].join("\n");
