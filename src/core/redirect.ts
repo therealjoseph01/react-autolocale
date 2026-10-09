@@ -28,7 +28,10 @@ export function redirectTarget(opts: {
 
 export const STORAGE_KEY = "react-autolocale:language";
 
-/** The same logic as a tiny inline script, so the root page redirects before anything paints. */
+/**
+ * The same logic as a tiny inline script, so the root page redirects before anything paints. When the visitor stays,
+ * the URL is rewritten to the original language's prefix (no reload) so client-side routers see a prefixed path.
+ */
 export function redirectScript(codes: readonly string[], original: string): string {
   return (
     `(function(){try{var C=${JSON.stringify(codes)},O=${JSON.stringify(original)},p=location.pathname,` +
@@ -36,6 +39,7 @@ export function redirectScript(codes: readonly string[], original: string): stri
     `var t=null,s=localStorage.getItem(${JSON.stringify(STORAGE_KEY)});if(s&&C.indexOf(s)>-1)t=s;` +
     `var l=navigator.languages||[navigator.language];for(var i=0;i<l.length&&!t;i++){` +
     `var c=String(l[i]).toLowerCase();if(C.indexOf(c)>-1)t=c;else if(C.indexOf(c.split("-")[0])>-1)t=c.split("-")[0]}` +
-    `if(t&&t!==O)location.replace("/"+t+p+location.search+location.hash)}catch(e){}})()`
+    `if(t&&t!==O)location.replace("/"+t+p+location.search+location.hash);` +
+    `else history.replaceState(history.state,"","/"+O+p+location.search+location.hash)}catch(e){}})()`
   );
 }

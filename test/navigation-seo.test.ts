@@ -30,19 +30,27 @@ describe("redirectTarget", () => {
 describe("redirectScript", () => {
   const run = (pathname: string, languages: string[], saved?: string) => {
     let to: string | null = null;
-    new Function("location", "navigator", "localStorage", redirectScript(codes, "en"))(
+    let rewritten: string | null = null;
+    new Function("location", "navigator", "localStorage", "history", redirectScript(codes, "en"))(
       { pathname, search: "", hash: "", replace: (u: string) => (to = u) },
       { languages },
       { getItem: () => saved ?? null },
+      { state: null, replaceState: (_s: unknown, _t: string, u: string) => (rewritten = u) },
     );
-    return to;
+    return { to, rewritten };
   };
   it("matches the function's behaviour", () => {
-    expect(run("/", ["fr-FR"])).toBe("/fr/");
-    expect(run("/about", ["es"])).toBe("/es/about");
-    expect(run("/", ["en-US"])).toBeNull();
-    expect(run("/fr/", ["es"])).toBeNull();
-    expect(run("/", ["fr"], "en")).toBeNull();
+    expect(run("/", ["fr-FR"]).to).toBe("/fr/");
+    expect(run("/about", ["es"]).to).toBe("/es/about");
+    expect(run("/", ["en-US"]).to).toBeNull();
+    expect(run("/fr/", ["es"]).to).toBeNull();
+    expect(run("/", ["fr"], "en").to).toBeNull();
+  });
+  it("settles on the original language's prefixed URL when the visitor stays", () => {
+    expect(run("/", ["en-US"]).rewritten).toBe("/en/");
+    expect(run("/about", ["ja"]).rewritten).toBe("/en/about");
+    expect(run("/fr/about", ["en"]).rewritten).toBeNull(); // already prefixed: untouched
+    expect(run("/", ["fr"]).rewritten).toBeNull(); // redirecting instead
   });
 });
 

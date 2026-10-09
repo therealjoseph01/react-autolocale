@@ -65,8 +65,31 @@ const Context = createContext<Ctx>({ language: original, dict: {}, setLanguage: 
 function initialState(): State {
   if (!hasDom) return { language: original, dict: {} };
   const boot = window.__AUTOSCALE__;
-  const language = boot?.lang ?? prefixOf(window.location.pathname) ?? original;
   if (boot) cache.set(boot.lang, boot.dict);
+  const { pathname, search, hash } = window.location;
+  const fromUrl = prefixOf(pathname);
+  if (fromUrl === null) {
+    // An un-prefixed URL such as "/": send the visitor to their language, or settle on the original language's
+    // prefixed URL so a router with basename "/en" can match. The URL is the source of truth for the language.
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+    const to = redirectTarget({
+      pathname,
+      search,
+      hash,
+      saved,
+      browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
+      codes: [...codes],
+      original,
+    });
+    if (to) window.location.replace(to);
+    else window.history.replaceState(window.history.state, "", `/${original}${pathname}${search}${hash}`);
+  }
+  const language = fromUrl ?? original;
   return { language, dict: language === original ? {} : (cache.get(language) ?? {}) };
 }
 
@@ -119,26 +142,6 @@ export function AutoScale({ children }: AutoScaleProps): ReactElement {
     document.documentElement.lang = state.language;
     document.documentElement.dir = languages.find((l) => l.code === state.language)?.rtl ? "rtl" : "ltr";
   }, [state.language]);
-
-  // First visit on an un-prefixed URL: move the visitor to their saved or browser language.
-  useEffect(() => {
-    let saved: string | null = null;
-    try {
-      saved = window.localStorage.getItem(STORAGE_KEY);
-    } catch {
-      /* storage unavailable */
-    }
-    const to = redirectTarget({
-      pathname: window.location.pathname,
-      search: window.location.search,
-      hash: window.location.hash,
-      saved,
-      browser: window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language],
-      codes: [...codes],
-      original,
-    });
-    if (to) window.location.replace(to);
-  }, []);
 
   // Dev server has no pre-rendered dictionary: fetch it on first load.
   useEffect(() => {
